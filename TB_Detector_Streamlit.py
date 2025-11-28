@@ -6,11 +6,12 @@ import time
 import streamlit.components.v1 as components
 
 # ==========================================
-# AUTO-INSTALLER
+# AUTO-INSTALLER (CLOUD SAFE VERSION)
 # ==========================================
-def check_and_install_libs():
+def check_libs():
     required = {'seaborn': 'seaborn', 'sklearn': 'scikit-learn', 'pandas': 'pandas'}
     missing = []
+    
     for lib_import, lib_install in required.items():
         try:
             __import__(lib_import)
@@ -18,22 +19,40 @@ def check_and_install_libs():
             missing.append(lib_install)
     
     if missing:
-        try:
-            subprocess.check_call([sys.executable, "-m", "pip", "install"] + missing)
-            time.sleep(1)
-            st.rerun()
-        except Exception as e:
-            st.error(f"Gagal install: {e}")
+        # Cek Sistem Operasi
+        # 'nt' = Windows (Laptop Lokal/EXE) -> Boleh Install
+        # 'posix' = Linux (Streamlit Cloud) -> Dilarang Install Paksa
+        if os.name == 'nt':
+            try:
+                subprocess.check_call([sys.executable, "-m", "pip", "install"] + missing)
+                time.sleep(1)
+                st.rerun()
+            except:
+                pass
+        else:
+            # Jika di Cloud, STOP dan beri pesan jelas (jangan crash)
+            st.error(f"""
+            🚨 **Library Missing in Cloud Environment**
+            
+            Aplikasi tidak menemukan library berikut: `{', '.join(missing)}`
+            
+            **SOLUSI UNTUK PEMILIK APLIKASI:**
+            1. Buka file `requirements.txt` di GitHub.
+            2. Tambahkan nama library di atas ke dalamnya.
+            3. Commit changes (Save).
+            4. Reboot aplikasi di dashboard Streamlit Cloud.
+            """)
             st.stop()
 
+# Cek library sebelum lanjut
 try:
     import seaborn
     import sklearn
 except ImportError:
-    check_and_install_libs()
+    check_libs()
 
 # ==========================================
-# IMPORT LIBRARY
+# IMPORT LIBRARY UTAMA
 # ==========================================
 import tensorflow as tf
 from tensorflow.keras.models import load_model, Model
@@ -53,22 +72,35 @@ from datetime import datetime
 from supabase import create_client, Client 
 
 # ==========================================
-# KONFIGURASI DATABASE (HYBRID: CLOUD + LOCAL)
+# KONFIGURASI DATABASE (FIXED SECRETS ERROR)
 # ==========================================
+# Default Fallback (Hardcoded Keys) - Digunakan jika secrets.toml tidak ditemukan
 SUPABASE_URL = "https://knisufytmlpdlgajrlqm.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtuaXN1Znl0bWxwZGxnYWpybHFtIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NDMxNTUwNywiZXhwIjoyMDc5ODkxNTA3fQ.tR4PL_vpbQMJUcKrCHKhnfnGfQGyjFMQ7CaUoXRDQVQ"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtuaXN1Znl0bWxwZGxnYWpybHFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQzMTU1MDcsImV4cCI6MjA3OTg5MTUwN30.1RDf1v9BzrpA519LYO8tURfuHUPE6j59KBi2bUqcEJw"
+
+# Coba ambil dari Secrets (Streamlit Cloud), jika gagal gunakan Hardcoded di atas
+try:
+    if hasattr(st, "secrets") and "supabase" in st.secrets:
+        SUPABASE_URL = st.secrets["supabase"]["url"]
+        SUPABASE_KEY = st.secrets["supabase"]["key"]
+except Exception:
+    # Jika error (file secrets.toml tidak ada), abaikan dan lanjut pakai hardcode
+    pass
 
 DB_MODE = "LOCAL" 
 supabase_client = None
 LOCAL_DB_FILE = "medical_records_local.csv"
 
+# Coba koneksi ke Supabase
 try:
     if "MASUKKAN" not in SUPABASE_URL and len(SUPABASE_URL) > 5:
         supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
         DB_MODE = "CLOUD"
 except Exception as e:
-    print(f"Supabase init skipped: {e}")
+    # Jika gagal koneksi internet/supabase, fallback ke Local
+    pass
 
+# Fungsi Database Abstraksi
 def save_record(data_dict):
     if DB_MODE == "CLOUD" and supabase_client:
         try:
@@ -239,11 +271,9 @@ class StreamlitPlotCallback(Callback):
 # LOGIN PAGE
 # ==========================================
 def login_page():
-    # Pusatkan form login dengan kolom
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
         st.markdown("<div style='text-align: center; margin-top: 50px; margin-bottom: 20px;'>", unsafe_allow_html=True)
-        # Ikon Medis
         st.markdown("<i class='fa-solid fa-user-doctor fa-4x' style='color:#2563eb;'></i>", unsafe_allow_html=True)
         st.markdown("<h2 style='color:#0f172a;'>MedSys Pro Security</h2>", unsafe_allow_html=True)
         st.markdown("<p style='color:#64748b;'>Authorized Personnel Only</p>", unsafe_allow_html=True)
@@ -255,8 +285,6 @@ def login_page():
             submitted = st.form_submit_button("Access System", type="primary")
             
             if submitted:
-                # CREDENTIALS SEDERHANA (HARDCODED)
-                # Username: admin, Password: admin123
                 if username == "admin" and password == "admin123":
                     st.session_state['logged_in'] = True
                     st.session_state['username'] = username
@@ -274,21 +302,18 @@ def logout():
 # MAIN UI CONTROLLER
 # ==========================================
 def main():
-    # Inisialisasi Session State
     if 'logged_in' not in st.session_state:
         st.session_state['logged_in'] = False
 
-    # Logika Tampilan: Login vs Dashboard
     if not st.session_state['logged_in']:
         login_page()
     else:
         dashboard()
 
 # ==========================================
-# DASHBOARD UTAMA (LOGIC LAMA DIPINDAHKAN KESINI)
+# DASHBOARD UTAMA
 # ==========================================
 def dashboard():
-    # --- SIDEBAR (NAVIGASI PRO) ---
     with st.sidebar:
         st.markdown("""
             <div style="text-align: center; margin-bottom: 20px;">
@@ -302,7 +327,6 @@ def dashboard():
             logout()
             
         st.markdown("---")
-        
         js_sidebar_widget()
         st.markdown("<br><p style='color:#64748b; font-size:12px; font-weight:700;'>MAIN MODULES</p>", unsafe_allow_html=True)
         app_mode = st.radio("Select Operation:", ["Radiology Diagnosis", "Patient Database", "Batch Evaluation", "Model Training"], label_visibility="collapsed")
@@ -317,7 +341,6 @@ def dashboard():
             st.form_submit_button("Update Context", type="primary")
         
         st.markdown("---")
-        # Status Koneksi Database (Auto-Detect)
         if DB_MODE == "CLOUD":
             st.markdown('<div style="color:#4ade80; font-size:12px;"><i class="fa-solid fa-cloud"></i> CLOUD DATABASE CONNECTED</div>', unsafe_allow_html=True)
         else:
@@ -397,7 +420,6 @@ def dashboard():
                 superimposed = cv2.addWeighted(img_rgb, 1.0, heatmap_colored, alpha, 0)
                 st.image(superimposed, caption="AI Heatmap Analysis", use_column_width=True)
                 
-                # FITUR SAVE TO DATABASE (Hybrid)
                 st.markdown("---")
                 if st.button("💾 Save Record to Database", type="secondary"):
                     with st.spinner("Saving data..."):
@@ -437,7 +459,6 @@ def dashboard():
                 use_container_width=True
             )
             
-            # Statistik Cepat
             c1, c2 = st.columns(2)
             c1.metric("Total Records", len(df))
             if 'diagnosis' in df.columns:
